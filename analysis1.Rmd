@@ -1,0 +1,21 @@
+---
+title: "NFL behaviour"
+author: "Bindoff, A."
+output: html_document
+---
+
+`r Sys.time()`
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## {.tabset}
+
+```{r}
+library(readr)
+library(dplyr)
+library(ggplot2)
+d <- read_csv("nfl_exercise.csv")
+
+```
