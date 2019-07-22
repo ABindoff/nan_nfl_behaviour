@@ -1,0 +1,238 @@
+---
+title: "NFL behaviour"
+author: "Bindoff, A., Tian. N."
+output:
+  html_document:
+    code_folding: 'hide'
+---
+
+`r Sys.time()`
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+## {.tabset}
+
+```{r}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(lme4)
+library(lmerTest)
+library(knitr)
+library(reshape2)
+library(ggbeeswarm)
+library(openxlsx)
+
+
+# d <- read_csv("nfl_exercise.csv") %>%
+#   mutate(exercise = factor(exercise, levels = c(1, 0), labels = c("exercise", "no exercise")),
+#          geno = factor(geno, levels = c("WT", "NFL")))
+
+```
+
+```{r}
+d0 <- lapply(1:3, function(x) read.xlsx('nfl_behaviour_2019.xlsx', sheet = x, startRow = 3))
+
+names(d0[[3]]) <- c("ID",
+                    "Geno",
+                    "Exercise",
+                    "HLS_pre",
+                    "HLS_post",
+                    "HLS_change",
+                    "FLS_pre",
+                    "FLS_post",
+                    "FLS_change",
+                    "ALS_pre",
+                    "ALS_post",
+                    "ALS_change")
+
+d <- left_join(d0[[1]], d0[[2]]) %>%
+  left_join(d0[[3]]) %>%
+  mutate(Exercise = factor(Exercise, levels = c(0, 1), labels = c("No exercise", "Exercise")),
+         Geno = factor(Geno, levels = c("wt", "NFL")))
+
+```
+
+
+### Open field
+
+#### Centre time
+
+```{r}
+dw = 2/3
+
+ggplot(d, aes(x = Geno, colour = Exercise, y = CT_change)) +
+  geom_boxplot(position = position_dodge(width = dw), alpha = 0) +
+  geom_quasirandom(dodge.width = dw, size = 2) +
+  scale_colour_manual(values = c("black", "red")) +
+  ylab("Change time in centre (%)") +
+  xlab("Genotype") +
+  theme_bw()
+```
+
+#### ANCOVA
+
+CT post adjusted for CT pre   
+
+```{r}
+m1 <- lm(CT_post ~ CT_pre + Geno * Exercise, d)
+anova(m1)
+
+#plot(m1)
+```
+```{r}
+d %>% group_by(Geno) %>%
+  summarise(mean = mean(CT_change, na.rm = TRUE),
+            sd = sd(CT_change, na.rm = TRUE)) %>%
+  kable(digits = 2)
+
+d %>% group_by(Exercise) %>%
+  summarise(mean = mean(CT_change, na.rm = TRUE),
+            sd = sd(CT_change, na.rm = TRUE)) %>%
+  kable(digits = 2)
+
+d %>% group_by(Geno, Exercise) %>%
+  summarise(mean = mean(CT_change, na.rm = TRUE),
+            sd = sd(CT_change, na.rm = TRUE)) %>%
+  kable(digits = 2)
+```
+
+#### Total movement
+
+```{r}
+ggplot(d, aes(x = Geno, colour = Exercise, y = TM_change)) +
+  geom_boxplot(position = position_dodge(width = dw), alpha = 0.0) +
+  geom_quasirandom(dodge.width = dw, size = 2) +
+  scale_colour_manual(values = c("black", "red")) +
+  ylab("Change total movement (cm)") +
+  xlab("Genotype") +
+  theme_bw()
+```
+
+```{r}
+m1 <- lm(TM_post ~ TM_pre + Geno*Exercise, d)
+anova(m1)
+
+plot(m1)
+```
+
+```{r}
+d %>% group_by(Geno) %>%
+  summarise(mean = mean(TM_change, na.rm = TRUE),
+            sd = sd(TM_change, na.rm = TRUE)) %>%
+  kable(digits = 2)
+
+d %>% group_by(Exercise) %>%
+  summarise(mean = mean(TM_change, na.rm = TRUE),
+            sd = sd(TM_change, na.rm = TRUE)) %>%
+  kable(digits = 2)
+
+d %>% group_by(Geno, Exercise) %>%
+  summarise(mean = mean(TM_change, na.rm = TRUE),
+            sd = sd(TM_change, na.rm = TRUE)) %>%
+  kable(digits = 2)
+
+
+
+```
+
+
+### Grip strength
+
+```{r}
+gs <- select(d, ID, Geno, Exercise, HS_pre, HS_post, FS_pre, FS_post) %>%
+  melt(id.vars = c("ID", "Geno", "Exercise")) %>%
+  mutate(time = case_when(variable %in% c("HS_pre", "FS_pre") ~ "Pre",
+                          variable %in% c("HS_post", "FS_post") ~ "Post"),
+         time = factor(time, levels = c("Pre", "Post"))) %>%
+  mutate(Limb = case_when(variable %in% c("HS_pre", "HS_post") ~ "Hindlimb",
+                          variable %in% c("FS_pre", "FS_post") ~ "Forelimb"))
+
+ggplot(gs, aes(x = Geno, colour = Exercise, y = value, shape = Limb)) +
+  geom_boxplot(position = position_dodge(width = dw), alpha = 0) +
+    geom_quasirandom(dodge.width = dw, size = 2, alpha = 0.5) +
+  scale_colour_manual(values = c("black", "red")) +
+  facet_wrap(~time) +
+  ylab("Grip strength") +
+  xlab("Genotype") +
+  theme_bw()
+```
+
+Mixed effects models were fitted with a random intercept for animal id using the `lme4` package in R. The Genotype x Exercise x time 3-way interaction, and Genotype x Exercise  and Genotype x time interactions were tested, adjusting for limb (front or hind), and Exercise x time interaction.  
+
+```{r}
+m1 <- lmer(value ~ Limb + Geno*time + Exercise*time + Geno*Exercise*time + (1|ID), gs)
+anova(m1)
+
+gs %>% group_by(Geno, time) %>%
+  summarise(mean = mean(value, na.rm = TRUE),
+            sd = sd(value, na.rm = TRUE)) %>%
+  kable(digits = 2)
+
+gs %>% group_by(Geno, Exercise, time) %>%
+  summarise(mean = mean(value, na.rm = TRUE),
+            sd = sd(value, na.rm = TRUE)) %>%
+  kable(digits = 2)
+```
+
+```{r, fig.cap = "Mean grip strength [95% CI]"}
+library(plotrix)
+gs0 <- gs %>% group_by(time, Exercise, Geno) %>%
+  summarise(mean = mean(value, na.rm = TRUE),
+            se = std.error(value, na.rm = TRUE)) %>%
+  mutate(lwr = mean - 1.96*se,
+         upr = mean + 1.96*se)
+
+ggplot(gs0, aes(x = time, colour = Geno, group = Geno, y = mean, ymin = lwr, ymax = upr)) +
+  geom_point(size = 3, position = position_dodge(width = 0.2)) +
+  geom_linerange(position = position_dodge(width = 0.2), size = 1) +
+  geom_path(position = position_dodge(width = 0.2), linetype = "dashed", size = 1) +
+  scale_colour_manual(values = c("black", "red")) +
+  ylab("Grip strength /gm bw") +
+  xlab("") +
+  facet_wrap(~Exercise) +
+  theme_bw()
+
+```
+
+### Foot print
+
+```{r}
+gs <- select(d, id, geno, exercise, fp_pre, fp_post) %>%
+  melt(id.vars = c("id", "geno", "exercise")) %>%
+  mutate(time = factor(variable, labels = c("Pre", "Post"))) %>%
+  na.omit()
+
+ggplot(gs, aes(x = geno, colour = exercise, y = value)) +
+  geom_boxplot(position = position_dodge(width = 0.666)) +
+    geom_quasirandom(dodge.width = 0.666) +
+  scale_colour_manual(values = c("black", "red")) +
+  facet_wrap(~time) +
+  ylab("Foot print") +
+  xlab("Genotype") +
+  theme_bw()
+```
+
+Mixed effects models were fitted with a random intercept for animal id using the `lme4` package in R. All two-way interactions were tested.  
+
+```{r}
+m1 <- lmer(value ~ geno*time + exercise*time + geno*exercise + (1|id), gs)
+anova(m1)
+
+gs %>% group_by(geno, time) %>%
+  summarise(mean = mean(value, na.rm = TRUE),
+            sd = sd(value, na.rm = TRUE)) %>%
+  kable()
+
+gs %>% group_by(exercise, time) %>%
+  summarise(mean = mean(value, na.rm = TRUE),
+            sd = sd(value, na.rm = TRUE)) %>%
+  kable()
+
+gs %>% group_by(geno, exercise, time) %>%
+  summarise(mean = mean(value, na.rm = TRUE),
+            sd = sd(value, na.rm = TRUE)) %>%
+  kable()
+```
