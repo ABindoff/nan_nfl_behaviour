@@ -3,4 +3,9 @@
 .RData
 .Ruserdata
 *.xlsx
+<<<<<<< HEAD
 *.csv
+=======
+*.csv
+*.html
+>>>>>>> b7339b872c90063d481c2cff8dc8e2b3e9a003ec
