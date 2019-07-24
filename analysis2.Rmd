@@ -203,19 +203,80 @@ ggplot(dd, aes(x = Geno, colour = Exercise, y = fit, ymin = lwr, ymax = upr)) +
   theme_bw()
 
 ```
+##### Mixed model (pre and post)
 
+In order to estimate the differences at baseline for the genotypes and the effect of exercise a linear mixed effects model was fitted.
+
+```{r}
+d0 <- select(d, ID, Geno, Exercise, TM_pre, TM_post) %>%
+  reshape2::melt(id.vars = c("ID", "Geno", "Exercise")) %>%
+  arrange(ID, variable) %>%
+  mutate(time = factor(variable, levels = c("TM_pre", "TM_post"), labels = c("Pre", "Post")),
+         Exercise = factor(Exercise, levels = c("No exercise", "Exercise")),
+         Geno = factor(Geno, levels = c("wt", "NFL"))) %>%
+  select(-variable)
+
+m1 <- lmer(value ~ time*Geno*Exercise + (1|ID), d0)
+anova(m1)
+```
+
+```{r}
+dl <- expand.grid(time = c("Pre", "Post"),
+                  Exercise = factor(levels(d0$Exercise), levels = c("No exercise", "Exercise")),
+         Geno = factor(levels(d0$Geno), levels = c("wt", "NFL"))) %>%
+  arrange(Geno, Exercise, time)
+
+bootfit <- bootMer(m1, FUN=function(x) predict(x, dl, re.form = NA),
+                   nsim = 500,
+                   parallel = "multicore",
+                   ncpus = 3L)
+dl$lwr <- apply(bootfit$t, 2, quantile, 0.025)
+dl$upr <- apply(bootfit$t, 2, quantile, 0.975)
+dl$fit <- apply(bootfit$t, 2, mean)
+
+
+knitr::kable(dl, digits = 2)
+
+```
+```{r}
+ggplot(dl, aes(x = time, y = fit, ymin = lwr, ymax = upr, colour = Exercise, group = Exercise)) +
+  ggbeeswarm::geom_quasirandom(data = d0, dodge.width = 0.4, alpha = 1/3, inherit.aes = FALSE,
+             aes(y = value, x= time, colour = Exercise)) +
+  geom_path(linetype = "dashed", position = position_dodge(width = 0.4)) +
+  geom_errorbar(position = position_dodge(width = 0.4), size = 1, width = 0.2) +
+    geom_point(size = 3, position = position_dodge(width = 0.4)) +
+  scale_colour_manual(values = c("black", "red")) +
+  ylab("Total movement (cm)") +
+  xlab("") +
+  facet_wrap(~Geno) +
+  theme_bw()
+```
 
 ### Grip strength
 
-```{r}
-gs <- select(d, ID, Geno, Exercise, HS_pre, HS_post, FS_pre, FS_post) %>%
-  melt(id.vars = c("ID", "Geno", "Exercise")) %>%
-  mutate(time = case_when(variable %in% c("HS_pre", "FS_pre") ~ "Pre",
-                          variable %in% c("HS_post", "FS_post") ~ "Post"),
-         time = factor(time, levels = c("Pre", "Post"))) %>%
-  mutate(Limb = case_when(variable %in% c("HS_pre", "HS_post") ~ "Hindlimb",
-                          variable %in% c("FS_pre", "FS_post") ~ "Forelimb"))
+#### Unadjusted means  
 
+```{r}
+gs <- select(d, ID, Geno, Exercise, HLS_pre, HLS_post, FLS_pre, FLS_post, ALS_pre, ALS_post) %>%
+  melt(id.vars = c("ID", "Geno", "Exercise")) %>%
+  mutate(time = case_when(variable %in% c("HLS_pre", "FLS_pre", "ALS_pre") ~ "Pre",
+                          variable %in% c("HLS_post", "FLS_post", "ALS_post") ~ "Post"),
+         time = factor(time, levels = c("Pre", "Post"))) %>%
+  mutate(Limb = case_when(variable %in% c("HLS_pre", "HLS_post") ~ "Hindlimb",
+                          variable %in% c("FLS_pre", "FLS_post") ~ "Forelimb",
+                          variable %in% c("ALS_pre", "ALS_post") ~ "All-limb"))
+gs %>% group_by(Geno, time, Limb) %>%
+  summarise(mean = mean(value, na.rm = TRUE),
+            sd = sd(value, na.rm = TRUE)) %>%
+  kable(digits = 2)
+
+gs %>% group_by(Exercise, time, Limb) %>%
+  summarise(mean = mean(value, na.rm = TRUE),
+            sd = sd(value, na.rm = TRUE)) %>%
+  kable(digits = 2)
+```
+
+```{r}
 
 ggplot(gs, aes(x = time, colour = Exercise, y = value)) +
   geom_boxplot(position = position_dodge(width = dw), alpha = 0) +
@@ -228,103 +289,23 @@ ggplot(gs, aes(x = time, colour = Exercise, y = value)) +
 
 ```
 
+#### Linear mixed effects model
+
 Mixed effects models were fitted with a random intercept for animal id using the `lme4` package in R.
 
-```{r eval = FALSE}
-m1 <- lmer(value ~ Limb + Geno*time + Exercise*time + Geno*Exercise*time + (1|ID), gs)
+```{r}
+m1 <- lmer(value ~ Geno*time*Limb + Geno*Exercise*time + (1|ID), gs)
 anova(m1)
 
-gs %>% group_by(Geno, time) %>%
-  summarise(mean = mean(value, na.rm = TRUE),
-            sd = sd(value, na.rm = TRUE)) %>%
-  kable(digits = 2)
-
-gs %>% group_by(Exercise, time) %>%
-  summarise(mean = mean(value, na.rm = TRUE),
-            sd = sd(value, na.rm = TRUE)) %>%
-  kable(digits = 2)
 ```
 
 
-```{r eval = FALSE}
-m2 <- lmer(value ~ Geno*Exercise*time + (1|ID), gs)
+```{r}
+#m2 <- lmer(value ~ Geno*Exercise*time + (1|ID), gs)
 gs0 <- expand.grid(time = factor(levels(gs$time), levels = c("Pre", "Post")),
                    Geno = factor(levels(gs$Geno), levels = c("wt", "NFL")),
-                   Exercise = factor(levels(gs$Exercise), levels = c("No exercise", "Exercise")))
-
-bootfit <- bootMer(m2, FUN=function(x) predict(x, gs0, re.form = NA),
-                   nsim = 500,
-                   parallel = "multicore",
-                   ncpus = 3L)
-
-gs0$lwr <- apply(bootfit$t, 2, quantile, 0.025)
-gs0$upr <- apply(bootfit$t, 2, quantile, 0.975)
-gs0$fit <- apply(bootfit$t, 2, mean)
-
-
-ggplot(gs0, aes(x = time, colour = Geno, group = Geno, y = fit, ymin = lwr, ymax = upr)) +
-  geom_point(size = 3, position = position_dodge(width = 0.2)) +
-  geom_errorbar(position = position_dodge(width = 0.2), size = 1, width = 0.2) +
-  geom_path(position = position_dodge(width = 0.2), linetype = "dashed", size = 1) +
-  scale_colour_manual(values = c("black", "red")) +
-  ylab("Grip strength /gm bw") +
-  xlab("") +
-  facet_wrap(~Exercise) +
-  ylim(40, 90) +
-  theme_bw()
-
-```
-
-```{r eval = FALSE}
-ggplot(gs0, aes(x = time, colour = Exercise, group = Exercise, y = fit, ymin = lwr, ymax = upr)) +
-  geom_point(size = 3, position = position_dodge(width = 0.2)) +
-  geom_errorbar(position = position_dodge(width = 0.2), size = 1, width = 0.2) +
-  geom_path(position = position_dodge(width = 0.2), linetype = "dashed", size = 1) +
-  scale_colour_manual(values = c("black", "red")) +
-  ylab("Grip strength /gm bw") +
-  xlab("") +
-  facet_wrap(~Geno) +
-  ylim(40, 90) +
-  theme_bw()
-
-```
-
-##### Unadjusted means (change in grip-strength)
-
-```{r}
-gs1 <- gs %>% select(ID, Geno, Exercise, time, value, Limb) %>% tidyr::spread(time, value)
-
-
-gs1 %>% group_by(Geno, Limb) %>%
-  summarise(gs.mean = mean(Post - Pre),
-            gs.sd = sd(Post - Pre)) %>%
-  knitr::kable(digits = 2)
-
-gs1 %>% group_by(Exercise, Limb) %>%
-  summarise(gs.mean = mean(Post - Pre),
-            gs.sd = sd(Post - Pre)) %>%
-  knitr::kable(digits = 2)
-
-gs1 %>% group_by(Geno, Exercise, Limb) %>%
-  summarise(gs.mean = mean(Post - Pre),
-            gs.sd = sd(Post - Pre)) %>%
-  knitr::kable(digits = 2)
-```
-
-##### Mixed ANCOVA
-
-In order to account for measurements of both front- and hind-limb, a mixed model ANCOVA was fitted with a random intercept for mouse ID.  
-
-```{r}
-m1 <- lmer(Post ~ Pre + Geno*Exercise + (1|ID), gs1)
-anova(m1)
-```
-
-```{r, fig.cap = "Mean grip strength [95% CI]"}
-
-gs0 <- expand.grid(Pre = mean(gs1$Pre),
-                   Geno = factor(levels(gs1$Geno), levels = c("wt", "NFL")),
-                   Exercise = factor(levels(gs1$Exercise), levels = c("No exercise", "Exercise")))
+                   Exercise = factor(levels(gs$Exercise), levels = c("No exercise", "Exercise")),
+                   Limb = c("All-limb", "Forelimb", "Hindlimb"))
 
 bootfit <- bootMer(m1, FUN=function(x) predict(x, gs0, re.form = NA),
                    nsim = 500,
@@ -334,6 +315,48 @@ bootfit <- bootMer(m1, FUN=function(x) predict(x, gs0, re.form = NA),
 gs0$lwr <- apply(bootfit$t, 2, quantile, 0.025)
 gs0$upr <- apply(bootfit$t, 2, quantile, 0.975)
 gs0$fit <- apply(bootfit$t, 2, mean)
+
+knitr::kable(gs0, digits = 2)
+
+```
+
+```{r}
+ggplot(gs0, aes(x = time, colour = Exercise, group = Exercise, y = fit, ymin = lwr, ymax = upr)) +
+  geom_point(size = 3, position = position_dodge(width = 0.2)) +
+  geom_errorbar(position = position_dodge(width = 0.2), size = 1, width = 0.2) +
+  geom_path(position = position_dodge(width = 0.2), linetype = "dashed", size = 1) +
+  scale_colour_manual(values = c("black", "red")) +
+  ylab("Grip strength /gm bw") +
+  xlab("") +
+  facet_grid(Limb~Geno, scales = "free") +
+  theme_bw()
+
+```
+
+#### ANCOVA - All-limb grip strength
+
+
+```{r}
+
+gs1 <- gs %>% 
+  filter(Limb == 'All-limb') %>%
+  select(ID, Geno, Exercise, time, value) %>% tidyr::spread(time, value)
+
+m1 <- lm(Post ~ Pre + Geno*Exercise, gs1)
+anova(m1)
+```
+
+```{r, fig.cap = "Mean grip strength [95% CI]"}
+
+gs0 <- expand.grid(Pre = mean(gs1$Pre),
+                   Geno = factor(levels(gs1$Geno), levels = c("wt", "NFL")),
+                   Exercise = factor(levels(gs1$Exercise), levels = c("No exercise", "Exercise")))
+
+z <- predict(m1, gs0, se.fit = TRUE)
+
+gs0$lwr <- z$fit - 1.96*z$se.fit
+gs0$upr <- z$fit + 1.96*z$se.fit
+gs0$fit <- z$fit
 
 knitr::kable(gs0, digits = 2)
 
@@ -350,8 +373,90 @@ ggplot(gs0, aes(x = Exercise, colour = Geno, group = Geno, y = fit, ymin = lwr, 
   scale_colour_manual(values = c("black", "red")) +
   ylab("Grip strength gm/gm bw") +
   xlab("") +
-  ylim(40, 100) +
   theme_bw()
 
 ```
 
+
+### Foot print
+
+#### Unadjusted means  
+
+```{r}
+fs <- select(d, ID, Geno, Exercise, HS_pre, HS_post, FS_pre, FS_post, Uf_pre, Uf_post) %>%
+  melt(id.vars = c("ID", "Geno", "Exercise")) %>%
+  mutate(time = case_when(variable %in% c("HS_pre", "FS_pre", "Uf_pre") ~ "Pre",
+                          variable %in% c("HS_post", "FS_post", "Uf_post") ~ "Post"),
+         time = factor(time, levels = c("Pre", "Post"))) %>%
+  mutate(Limb = case_when(variable %in% c("HS_pre", "HS_post") ~ "Hindlimb",
+                          variable %in% c("FS_pre", "FS_post") ~ "Forelimb",
+                          variable %in% c("Uf_pre", "Uf_post") ~ "Uniformity")) %>%
+  filter(Limb != "Uniformity")
+
+fs %>% group_by(Geno, time, Limb) %>%
+  summarise(mean = mean(value, na.rm = TRUE),
+            sd = sd(value, na.rm = TRUE)) %>%
+  kable(digits = 2)
+
+fs %>% group_by(Exercise, time, Limb) %>%
+  summarise(mean = mean(value, na.rm = TRUE),
+            sd = sd(value, na.rm = TRUE)) %>%
+  kable(digits = 2)
+```
+
+```{r}
+
+ggplot(fs, aes(x = time, colour = Exercise, y = value)) +
+  geom_boxplot(position = position_dodge(width = dw), alpha = 0) +
+    geom_quasirandom(dodge.width = dw, size = 2, alpha = 1/3, aes(shape = Limb, group = Exercise)) +
+  scale_colour_manual(values = c("black", "red")) +
+  facet_wrap(~Geno) +
+  ylab("Foot print stride (mm)") +
+  xlab("Genotype") +
+  theme_bw()
+
+```
+
+#### Linear mixed effects model
+
+Mixed effects models were fitted with a random intercept for animal id using the `lme4` package in R.
+
+```{r}
+m1 <- lmer(value ~ Geno*time*Limb + Geno*Exercise*time + (1|ID), fs)
+anova(m1)
+
+```
+
+
+```{r}
+#m2 <- lmer(value ~ Geno*Exercise*time + (1|ID), gs)
+fs0 <- expand.grid(time = factor(levels(fs$time), levels = c("Pre", "Post")),
+                   Geno = factor(levels(fs$Geno), levels = c("wt", "NFL")),
+                   Exercise = factor(levels(fs$Exercise), levels = c("No exercise", "Exercise")),
+                   Limb = c("Forelimb", "Hindlimb"))
+
+bootfit <- bootMer(m1, FUN=function(x) predict(x, fs0, re.form = NA),
+                   nsim = 500,
+                   parallel = "multicore",
+                   ncpus = 3L)
+
+fs0$lwr <- apply(bootfit$t, 2, quantile, 0.025)
+fs0$upr <- apply(bootfit$t, 2, quantile, 0.975)
+fs0$fit <- apply(bootfit$t, 2, mean)
+
+knitr::kable(fs0, digits = 2)
+
+```
+
+```{r eval = TRUE}
+ggplot(fs0, aes(x = time, colour = Exercise, group = Exercise, y = fit, ymin = lwr, ymax = upr)) +
+  geom_point(size = 3, position = position_dodge(width = 0.2)) +
+  geom_errorbar(position = position_dodge(width = 0.2), size = 1, width = 0.2) +
+  geom_path(position = position_dodge(width = 0.2), linetype = "dashed", size = 1) +
+  scale_colour_manual(values = c("black", "red")) +
+  ylab("Grip strength /gm bw") +
+  xlab("") +
+  facet_grid(Limb~Geno) +
+  theme_bw()
+
+```
